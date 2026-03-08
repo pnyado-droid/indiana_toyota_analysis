@@ -23,11 +23,44 @@ This project scrapes customer reviews from **DealerRater** for Indiana Toyota de
 
 ## 📊 Visualizations
 
-| Chart | Description |
-|---|---|
-| `dealer_rankings.png` | Horizontal bar chart ranking dealerships by positive sentiment % |
-| `positive_vs_negative.png` | Side-by-side comparison of positive vs negative sentiment per dealer |
-| `sentiment_distribution.png` | Stacked chart showing full sentiment breakdown (positive/neutral/negative) |
+### 1. Dealer Rankings by Positive Sentiment
+![Dealer Rankings](dealer_rankings.png)
+
+*Horizontal bar chart showing all 20 dealerships ranked by percentage of positive reviews. Green = Recommended (≥60%), Red = Not Recommended (<60%). The dashed line marks the 60% threshold.*
+
+---
+
+### 2. Sentiment Distribution by Dealership
+![Sentiment Distribution](sentiment_distribution.png)
+
+*Stacked horizontal bar chart showing the breakdown of Positive (green), Neutral (yellow), and Negative (red) reviews for each dealership. Notice Jeff Wyler Toyota's large red section (62% negative).*
+
+---
+
+### 3. Positive vs Negative Sentiment Comparison
+![Positive vs Negative](positive_vs_negative.png)
+
+*Grouped bar chart comparing positive and negative sentiment percentages side-by-side for each dealership.*
+
+---
+
+## 🏆 Key Findings
+
+### Top Performers (>90% Positive)
+| Dealer | Positive % | Status |
+|--------|------------|--------|
+| Ed Martin Toyota | 94.0% | ✅ Recommended |
+| Tom Wood Toyota | 93.9% | ✅ Recommended |
+| Team Toyota | 90.0% | ✅ Recommended |
+
+### Warning Signs (<60% Positive)
+| Dealer | Positive % | Negative % | Key Customer Complaints |
+|--------|------------|------------|------------------------|
+| Gates Toyota | 57.8% | 11.1% | "No hospitality whatsoever" - Unfriendly staff |
+| Andy Mohr Toyota | 57.1% | 34.7% | Overcharging - "Signed $700, charged $1,100" |
+| Jeff Wyler Toyota | 36.0% | 62.0% | "Financial team stealing $4,240" - Hidden fees |
+
+**Result:** 17 out of 20 dealerships (85%) are **Recommended** based on sentiment analysis.
 
 ---
 
