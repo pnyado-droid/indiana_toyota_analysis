@@ -1,0 +1,287 @@
+---
+title: "Indiana Toyota Dealership Sentiment Analysis"
+subtitle: "Unstructured Data Analytics - DealerRater Scraping Project"
+format: html
+jupyter: python3
+---
+
+## Import Required Libraries
+
+```{python}
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import re
+import time
+
+from textblob import TextBlob
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+import matplotlib.pyplot as plt
+import numpy as np
+```
+
+## SECTION 1: SCRAPE DATA
+
+Scraping DealerRater for Indiana Toyota dealerships
+
+```{python}
+# Scrape dealer list from DealerRater
+url = "https://www.dealerrater.com/directory/Indiana/Toyota/"
+print(f"Fetching: {url}")
+
+headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
+
+link_request = requests.get(url, headers=headers)
+soup = BeautifulSoup(link_request.content, 'html.parser')
+
+# Find dealer links 
+dealer_links = soup.select('a[href*="-review-"]')
+
+dealers = []
+seen_ids = set()
+
+for link in dealer_links:
+    href = link.get('href')
+    name = link.get_text(strip=True)
+    
+    match = re.search(r'/dealer/(.+)-review-(\d+)/$', href)
+    if match:
+        dealer_id = match.group(2)
+        if dealer_id not in seen_ids:
+            seen_ids.add(dealer_id)
+            clean_name = re.sub(r'^\d+\.', '', name).strip()
+            if clean_name and len(clean_name) > 3:
+                dealers.append({
+                    'name': clean_name,
+                    'url': 'https://www.dealerrater.com' + href.replace('-review-', '-dealer-reviews-'),
+                    'id': dealer_id
+                })
+
+print(f"Found {len(dealers)} dealers")
+for i, d in enumerate(dealers[:20], 1):
+    print(f"{i}. {d['name']}")
+```
+
+```{python}
+# Scrape reviews for each dealer (max 5 pages per dealer)
+all_reviews = []
+max_pages = 5
+
+# Only scrape the 20 rated dealerships
+dealers_to_scrape = dealers[:20]
+
+for dealer in dealers_to_scrape:
+    print(f"Scraping: {dealer['name']}")
+    
+    for page in range(1, max_pages + 1):
+        if page == 1:
+            page_url = dealer['url']
+        else:
+            page_url = dealer['url'] + f"page{page}/"
+        
+        link_request = requests.get(page_url, headers=headers)
+        soup = BeautifulSoup(link_request.content, 'html.parser')
+        
+        # Find reviews using .review-whole selector
+        review_elems = soup.select('.review-whole')
+        
+        if not review_elems:
+            break
+        
+        for elem in review_elems:
+            text = elem.get_text(strip=True)
+            if text and len(text) > 20:
+                all_reviews.append({
+                    'dealer': dealer['name'],
+                    'review_text': text,
+                    'source': 'DealerRater'
+                })
+        
+        time.sleep(1)
+
+print(f"\nTotal reviews scraped: {len(all_reviews)}")
+
+# Create DataFrame
+df = pd.DataFrame(all_reviews)
+print(df['dealer'].value_counts())
+df.head()
+```
+
+## SECTION 2: CLEAN DATA
+
+```{python}
+# Clean the review 
+df['clean_review'] = df['review_text'].str.lower() \
+    .str.replace(r'\[.*?\]', '', regex=True) \
+    .str.replace(r'([a-z])([A-Z])', r'\1 \2', regex=True) \
+    .str.replace(r'http\S+|www\.\S+', '', regex=True) \
+    .str.replace(r'\s+', ' ', regex=True) \
+    .str.strip()
+
+# Remove short reviews
+df = df[df['clean_review'].str.len() > 10]
+df['word_count'] = df['clean_review'].apply(lambda x: len(x.split()))
+
+df.reset_index(drop=True, inplace=True)
+
+print(f"Cleaned {len(df)} reviews")
+df.head()
+```
+
+## SECTION 3: SENTIMENT ANALYSIS
+
+```{python}
+# TextBlob sentiment
+df['tb_polarity'] = df['clean_review'].apply(lambda x: TextBlob(x).sentiment.polarity)
+
+# VADER sentiment
+vader = SentimentIntensityAnalyzer()
+df['vader_compound'] = df['clean_review'].apply(lambda x: vader.polarity_scores(x).get('compound'))
+
+# Classify sentiment
+df['sentiment'] = df['vader_compound'].apply(
+    lambda x: 'Positive' if x >= 0.05 else ('Negative' if x <= -0.05 else 'Neutral')
+)
+
+print("Sentiment distribution:")
+print(df['sentiment'].value_counts())
+df.head()
+```
+
+```{python}
+# Calculate dealer scores (based purely on sentiment analysis)
+scores = []
+
+for dealer in df['dealer'].unique():
+    dealer_df = df[df['dealer'] == dealer]
+    total = len(dealer_df)
+    positive = len(dealer_df[dealer_df['sentiment'] == 'Positive'])
+    negative = len(dealer_df[dealer_df['sentiment'] == 'Negative'])
+    neutral = len(dealer_df[dealer_df['sentiment'] == 'Neutral'])
+    
+    # Sentiment-based score (% positive)
+    positive_pct = (positive / total * 100) if total > 0 else 0
+    negative_pct = (negative / total * 100) if total > 0 else 0
+    
+    # Overall score based on sentiment (positive% - negative%/2)
+    overall_score = positive_pct - (negative_pct * 0.5)
+    status = "Recommended" if positive_pct >= 60 else "Not Recommended"
+    avg_vader = dealer_df['vader_compound'].mean()
+    
+    scores.append({
+        'dealer': dealer,
+        'total_reviews': total,
+        'positive': positive,
+        'negative': negative,
+        'neutral': neutral,
+        'positive_pct': round(positive_pct, 1),
+        'negative_pct': round(negative_pct, 1),
+        'overall_score': round(overall_score, 1),
+        'avg_vader': round(avg_vader, 3),
+        'status': status
+    })
+
+df_scores = pd.DataFrame(scores)
+df_scores = df_scores.sort_values('positive_pct', ascending=False)
+df_scores.reset_index(drop=True, inplace=True)
+
+# Print scorecard
+print("\nINDIANA TOYOTA DEALERSHIP SCORECARD")
+print("=" * 70)
+print(f"{'DEALER':<30} {'POSITIVE':>10} {'NEGATIVE':>10} {'STATUS':<15}")
+print("-" * 70)
+for _, row in df_scores.iterrows():
+    print(f"{row['dealer']:<30} {row['positive_pct']:>8.1f}% {row['negative_pct']:>8.1f}%  {row['status']}")
+print("=" * 70)
+```
+
+## SECTION 4: VISUALIZE
+
+```{python}
+# Chart 1: Dealer Rankings by Positive Sentiment %
+colors_good = '#27ae60'
+colors_bad = '#e74c3c'
+colors_neutral = '#f39c12'
+
+fig1, ax1 = plt.subplots(figsize=(14, 10))
+df_plot = df_scores.sort_values('positive_pct', ascending=True)
+colors = [colors_good if score >= 60 else colors_bad for score in df_plot['positive_pct']]
+
+bars = ax1.barh(df_plot['dealer'], df_plot['positive_pct'], color=colors, height=0.6)
+for bar, score in zip(bars, df_plot['positive_pct']):
+    ax1.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2, 
+            f'{score:.0f}%', va='center', fontsize=10, fontweight='bold')
+
+ax1.axvline(x=60, color='gray', linestyle='--', linewidth=2, alpha=0.7)
+ax1.set_xlabel('Positive Sentiment (%)')
+ax1.set_title('Indiana Toyota Dealership Rankings\nBased on Sentiment Analysis of Reviews', fontsize=14, fontweight='bold')
+ax1.set_xlim(0, 110)
+
+from matplotlib.patches import Patch
+legend_elements = [Patch(facecolor=colors_good, label='Recommended (>=60% Positive)'),
+                  Patch(facecolor=colors_bad, label='Not Recommended (<60% Positive)')]
+ax1.legend(handles=legend_elements, loc='lower right')
+plt.tight_layout()
+plt.savefig('/Users/pridenyado/Desktop/dealer_rankings.png', dpi=300, bbox_inches='tight')
+plt.show()
+```
+
+```{python}
+# Chart 2: Positive vs Negative Sentiment by Dealer
+fig2, ax2 = plt.subplots(figsize=(14, 8))
+df_plot = df_scores.sort_values('positive_pct', ascending=False)
+x = np.arange(len(df_plot))
+width = 0.35
+
+ax2.bar(x - width/2, df_plot['positive_pct'], width, label='Positive %', color='#27ae60')
+ax2.bar(x + width/2, df_plot['negative_pct'], width, label='Negative %', color='#e74c3c')
+
+ax2.set_ylabel('Percentage of Reviews')
+ax2.set_title('Positive vs Negative Sentiment by Dealership\nBased on VADER Sentiment Analysis', 
+              fontsize=14, fontweight='bold')
+ax2.set_xticks(x)
+ax2.set_xticklabels(df_plot['dealer'], rotation=45, ha='right')
+ax2.legend()
+ax2.set_ylim(0, 105)
+plt.tight_layout()
+plt.savefig('/Users/pridenyado/Desktop/positive_vs_negative.png', dpi=300, bbox_inches='tight')
+plt.show()
+```
+
+```{python}
+# Chart 3: Sentiment Distribution
+fig3, ax3 = plt.subplots(figsize=(14, 8))
+df_plot = df_scores.sort_values('overall_score', ascending=False)
+
+pos_pct = df_plot['positive'] / df_plot['total_reviews'] * 100
+neu_pct = df_plot['neutral'] / df_plot['total_reviews'] * 100
+neg_pct = df_plot['negative'] / df_plot['total_reviews'] * 100
+
+ax3.barh(df_plot['dealer'], pos_pct, color=colors_good, label='Positive')
+ax3.barh(df_plot['dealer'], neu_pct, left=pos_pct, color=colors_neutral, label='Neutral')
+ax3.barh(df_plot['dealer'], neg_pct, left=pos_pct+neu_pct, color=colors_bad, label='Negative')
+
+ax3.set_xlabel('Percentage of Reviews')
+ax3.set_title('Sentiment Distribution by Dealership\nBreakdown of Review Sentiments', fontsize=14, fontweight='bold')
+ax3.legend(loc='lower right')
+ax3.set_xlim(0, 100)
+plt.tight_layout()
+plt.savefig('/Users/pridenyado/Desktop/sentiment_distribution.png', dpi=300, bbox_inches='tight')
+plt.show()
+```
+
+## EXPORT DATA
+
+```{python}
+# Save to CSV
+df.to_csv('/Users/pridenyado/Desktop/indiana_toyota_reviews.csv', index=False)
+df_scores.to_csv('/Users/pridenyado/Desktop/indiana_toyota_scores.csv', index=False)
+
+print("Files saved!")
+print(f"- indiana_toyota_reviews.csv ({len(df)} reviews)")
+print(f"- indiana_toyota_scores.csv ({len(df_scores)} dealers)")
+print(f"- dealer_rankings.png")
+print(f"- positive_vs_negative.png")
+print(f"- sentiment_distribution.png")
+```
